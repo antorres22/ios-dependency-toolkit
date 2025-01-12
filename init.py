@@ -1,0 +1,1 @@
+from .core.generator import SPMDiagramGenerator
