@@ -1,0 +1,20 @@
+# System files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Virtual environment
+venv/
+__pycache__/
+*.py[cod]
+
+# IDEs configuration files
+.vscode/
+.idea/
+
+# Log files
+*.log
+EOL
+
+# Results
+results/
