@@ -39,14 +39,14 @@ source venv_spm_generator/bin/activate
 
 ```bash
 # Basic usage
-python main.py --path /path/to/ios/project
+python3 main.py --path /path/to/ios/project
 
 # With additional options
-python main.py -p /path/to/ios/project -c
+python3 main.py -p /path/to/ios/project -c
 
 Or
 
-python main.py --path /path/to/ios/project --cached
+python3 main.py --path /path/to/ios/project --cached
 ```
 
 #### Python Script Options
