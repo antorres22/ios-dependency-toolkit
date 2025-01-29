@@ -1,18 +1,17 @@
-# spm_generator/diagram/components.py
-
 import xml.etree.ElementTree as ET
 import uuid
 
-def add_version_legend(root, y_position, x_position):
+def add_version_legend(root, y_position, x_position, parent):
     """Añade la leyenda de los iconos de versiones usando Entity Relation List"""
     legend_id = f'version_legend_{uuid.uuid4().hex[:8]}'
     
+    # Contenedor de la leyenda
     legend = ET.SubElement(root, 'mxCell')
     legend.set('id', legend_id)
     legend.set('value', 'Estados de Versiones')
-    legend.set('style', 'shape=mxgraph.er.list;align=left;verticalAlign=top;horizontal=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1')
+    legend.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#f5f5f5;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;strokeColor=#666666;fontSize=12;')
     legend.set('vertex', '1')
-    legend.set('parent', '1')
+    legend.set('parent', parent)
     
     geo = ET.SubElement(legend, 'mxGeometry')
     geo.set('x', str(x_position))
@@ -21,6 +20,7 @@ def add_version_legend(root, y_position, x_position):
     geo.set('height', '150')
     geo.set('as', 'geometry')
     
+    # Estados con mejor espaciado
     states = [
         ('🔴 Diferencia Major', 'Indica una diferencia en versión mayor'),
         ('🟡 Diferencia Minor o Patch > 5', 'Indica diferencia en versión menor o parche mayor a 5'),
@@ -28,45 +28,36 @@ def add_version_legend(root, y_position, x_position):
         ('⚫ No determinado', 'No se pudo determinar la versión')
     ]
     
-    y_offset = 30
-    
     for i, (state, desc) in enumerate(states):
         state_cell = ET.SubElement(root, 'mxCell')
         state_cell.set('id', f'legend_state_{legend_id}_{i}')
         state_cell.set('value', f'{state}')
-        state_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;')
+        state_cell.set('style', 'text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;')
         state_cell.set('vertex', '1')
         state_cell.set('parent', legend_id)
         
         state_geo = ET.SubElement(state_cell, 'mxGeometry')
-        state_geo.set('x', '10')
-        state_geo.set('y', str(y_offset))
-        state_geo.set('width', '230')
-        state_geo.set('height', '20')
+        state_geo.set('y', str(30 + (i * 30)))  # Mayor espaciado entre elementos
+        state_geo.set('width', '250')
+        state_geo.set('height', '30')
         state_geo.set('as', 'geometry')
-        state_geo.set('relative', '0')
-        
-        y_offset += 25
 
-def add_statistics(root, y_position, x_position, spm_modules, unique_dependencies, version_checker):
+def add_statistics(root, y_position, x_position, spm_modules, unique_dependencies, version_checker, parent):
     """Añade estadísticas del proyecto con información detallada de dependencias"""
     stats_id = f'statistics_{uuid.uuid4().hex[:8]}'
-    
     total_modules = sum(len(pkg['modules']) for pkg in spm_modules)
     
-    # Crear el contenedor con estilo Entity Relation List
+    # Contenedor principal de estadísticas
     stats = ET.SubElement(root, 'mxCell')
     stats.set('id', stats_id)
     stats.set('value', 'Estadísticas')
-    stats.set('style', 'shape=mxgraph.er.list;align=left;verticalAlign=top;horizontal=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1')
+    stats.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#f5f5f5;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#666666;fontSize=12;')
     stats.set('vertex', '1')
-    stats.set('parent', '1')
+    stats.set('parent', parent)
     
     # Ajustar dimensiones
-    base_width = 300
-    base_height = 120 + (len(unique_dependencies) * 100)
-    width = int(base_width * 1.3)
-    height = int(base_height * 1.3)
+    width = 380
+    height = 120 + (len(unique_dependencies) * 100)
     
     geo = ET.SubElement(stats, 'mxGeometry')
     geo.set('x', str(x_position))
@@ -75,49 +66,42 @@ def add_statistics(root, y_position, x_position, spm_modules, unique_dependencie
     geo.set('height', str(height))
     geo.set('as', 'geometry')
     
-    # Agregar información general
-    y_offset = 30
+    # Información general
     general_info = ET.SubElement(root, 'mxCell')
     general_info.set('id', f'general_info_{stats_id}')
     general_info.set('value', 
-        f'Total de Módulos: {total_modules}<br>' + 
-        f'Total de Dependencias Externas: {len(unique_dependencies)}<br>' +
-        f'Total de Ficheros: {len(spm_modules)}')
-    general_info.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;')
+        '<p style="margin:0px;">' +
+        f'Total de Módulos: {total_modules}</p><p style="margin:0px;">' + 
+        f'Total de Dependencias Externas: {len(unique_dependencies)}</p><p style="margin:0px;">' +
+        f'Total de Ficheros: {len(spm_modules)}</p>')
+    general_info.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
     general_info.set('vertex', '1')
     general_info.set('parent', stats_id)
     
     gen_geo = ET.SubElement(general_info, 'mxGeometry')
-    gen_geo.set('x', '10')
-    gen_geo.set('y', str(y_offset))
-    gen_geo.set('width', str(width - 20))
+    gen_geo.set('y', '30')  # Empieza después del título
+    gen_geo.set('width', str(width))
     gen_geo.set('height', '60')
     gen_geo.set('as', 'geometry')
-    gen_geo.set('relative', '0')
     
-    y_offset += 80
-    
-    # Agregar título de dependencias
+    # Título de dependencias
     deps_title = ET.SubElement(root, 'mxCell')
     deps_title.set('id', f'deps_title_{stats_id}')
     deps_title.set('value', 'Dependencias Externas')
-    deps_title.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1')
+    deps_title.set('style', 'text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=12;fontStyle=1')
     deps_title.set('vertex', '1')
     deps_title.set('parent', stats_id)
     
-    title_geo = ET.SubElement(deps_title, 'mxGeometry')
-    title_geo.set('x', '10')
-    title_geo.set('y', str(y_offset))
-    title_geo.set('width', str(width - 20))
-    title_geo.set('height', '20')
-    title_geo.set('as', 'geometry')
-    title_geo.set('relative', '0')
+    deps_title_geo = ET.SubElement(deps_title, 'mxGeometry')
+    deps_title_geo.set('y', '90')
+    deps_title_geo.set('width', str(width))
+    deps_title_geo.set('height', '30')
+    deps_title_geo.set('as', 'geometry')
     
-    y_offset += 30
-    
-    # Agregar dependencias
+    # Agregar cada dependencia
+    y_offset = 120
     for i, dep in enumerate(sorted(unique_dependencies.values(), key=lambda x: x['name'].lower())):
-        # Agregar separador
+        # Separador
         if i > 0:
             separator = ET.SubElement(root, 'mxCell')
             separator.set('id', f'separator_{stats_id}_{i}')
@@ -127,58 +111,56 @@ def add_statistics(root, y_position, x_position, spm_modules, unique_dependencie
             separator.set('parent', stats_id)
             
             sep_geo = ET.SubElement(separator, 'mxGeometry')
-            sep_geo.set('x', '10')
             sep_geo.set('y', str(y_offset))
-            sep_geo.set('width', str(width - 20))
+            sep_geo.set('width', str(width))
             sep_geo.set('height', '8')
             sep_geo.set('as', 'geometry')
-            sep_geo.set('relative', '0')
             
             y_offset += 8
         
-        # Agregar información de la dependencia
+        # Información de la dependencia
         latest_version = version_checker.get_latest_version(dep['url'])
         status = version_checker._get_version_status(dep['version'], latest_version, dep['url'])
         
         dep_cell = ET.SubElement(root, 'mxCell')
         dep_cell.set('id', f'dep_info_{stats_id}_{i}')
         dep_cell.set('value',
-            f'<b>{dep["name"]}</b><br>' +
-            f'URL: {dep["url"]}<br>' +
-            f'Versión actual: {dep["version"]}<br>' +
-            f'Última versión disponible: {latest_version}<br>' +
-            f'Status: {status}')
-        dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;')
+            '<p style="margin:0px;font-weight:bold;">' +
+            f'{dep["name"]}</p>' +
+            f'<p style="margin:0px;">URL: {dep["url"]}</p>' +
+            f'<p style="margin:0px;">Versión actual: {dep["version"]}</p>' +
+            f'<p style="margin:0px;">Última versión disponible: {latest_version}</p>' +
+            f'<p style="margin:0px;">Status: {status}</p>')
+        dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
         dep_cell.set('vertex', '1')
         dep_cell.set('parent', stats_id)
         
         dep_geo = ET.SubElement(dep_cell, 'mxGeometry')
-        dep_geo.set('x', '10')
         dep_geo.set('y', str(y_offset))
-        dep_geo.set('width', str(width - 20))
+        dep_geo.set('width', str(width))
         dep_geo.set('height', '80')
         dep_geo.set('as', 'geometry')
-        dep_geo.set('relative', '0')
         
         y_offset += 90
 
-def add_conflicts_section(root, y_position, x_position, conflicts):
+def add_conflicts_section(root, y_position, x_position, conflicts, parent):
     """Añade la sección de conflictos al diagrama"""
     conflicts_id = f'conflicts_{uuid.uuid4().hex[:8]}'
     
     conflicts_cell = ET.SubElement(root, 'mxCell')
     conflicts_cell.set('id', conflicts_id)
     conflicts_cell.set('value', '⚠️ Conflictos Detectados')
-    conflicts_cell.set('style', 'shape=mxgraph.er.list;align=left;verticalAlign=top;horizontal=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1')
+    conflicts_cell.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#ffe6cc;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#d79b00;fontSize=12;')
     conflicts_cell.set('vertex', '1')
-    conflicts_cell.set('parent', '1')
+    conflicts_cell.set('parent', parent)
     
     height = 50 + (len(conflicts) * 40)
+    width = 380
     
     geo = ET.SubElement(conflicts_cell, 'mxGeometry')
     geo.set('x', str(x_position))
     geo.set('y', str(y_position))
-    geo.set('width', '300')
+    geo.set('width', str(width))
     geo.set('height', str(height))
     geo.set('as', 'geometry')
     
@@ -187,50 +169,19 @@ def add_conflicts_section(root, y_position, x_position, conflicts):
         conflict_item = ET.SubElement(root, 'mxCell')
         conflict_item.set('id', f'conflict_{conflicts_id}_{i}')
         
-        conflict_text = f'<b>{conflict["package"]}</b>:<br>'
+        conflict_text = f'<p style="margin:0px;font-weight:bold;">{conflict["package"]}:</p>'
         for version_info in conflict['versions']:
-            conflict_text += f'• {version_info["module"]}: {version_info["version"]}<br>'
+            conflict_text += f'<p style="margin:0px;">• {version_info["module"]}: {version_info["version"]}</p>'
         
         conflict_item.set('value', conflict_text)
-        conflict_item.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;')
+        conflict_item.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
         conflict_item.set('vertex', '1')
         conflict_item.set('parent', conflicts_id)
         
         item_geo = ET.SubElement(conflict_item, 'mxGeometry')
-        item_geo.set('x', '10')
         item_geo.set('y', str(y_offset))
-        item_geo.set('width', '280')
+        item_geo.set('width', str(width - 20))
         item_geo.set('height', '40')
         item_geo.set('as', 'geometry')
-        item_geo.set('relative', '0')
         
         y_offset += 40
-
-def add_dependency_connections(root, module_cells, spm_modules):
-    """
-    Agrega conexiones de dependencia entre módulos.
-    La flecha sale del lado izquierdo del módulo que declara la dependencia
-    y apunta al lado derecho del módulo del que depende, en línea recta.
-    """
-    for pkg_idx, package_group in enumerate(spm_modules):
-        for i, module in enumerate(package_group['modules']):
-            source_id = f'module_{pkg_idx}_{i}'
-            
-            for dep in module['dependencies']:
-                if dep.get('isLocal', False) and dep['name'] in module_cells:
-                    target_id = module_cells[dep['name']]
-                    
-                    edge = ET.SubElement(root, 'mxCell')
-                    edge.set('id', f'dep_edge_{source_id}_{target_id}')
-                    edge.set('edge', '1')
-                    edge.set('parent', '1')
-                    edge.set('source', source_id)
-                    edge.set('target', target_id)
-                    
-                    edge.set('style', 'endArrow=open;startArrow=none;dashed=1;html=1;' + 
-                            'rounded=0;exitX=0;exitY=0.5;entryX=1;entryY=0.5;' +
-                            'endFill=0;strokeWidth=1;')
-                    
-                    edge_geo = ET.SubElement(edge, 'mxGeometry')
-                    edge_geo.set('relative', '1')
-                    edge_geo.set('as', 'geometry')

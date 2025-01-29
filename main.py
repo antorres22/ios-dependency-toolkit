@@ -75,7 +75,7 @@ def main():
     
     try:
         # Crear instancia del generador
-        diagram_generator = SPMDiagramGenerator(project_path, use_cache=args.cached)
+        diagram_generator = SPMDiagramGenerator(project_path, use_cache=True if args.cached else False)
         
         if args.cached:
             logging.info("🔄 Usando modo caché (sin consultas remotas)")
