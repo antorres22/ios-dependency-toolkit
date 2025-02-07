@@ -6,22 +6,33 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Valores por defecto
 PYTHON_ARGS=""
 
-# Parsear argumentos
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --path|-p) 
-            PYTHON_ARGS+=" --path $2"
-            shift 2
-            ;;
-        --cached|-c) 
-            PYTHON_ARGS+=" --cached"
-            shift
-            ;;
-        *) 
-            PYTHON_ARGS+=" $1"
-            shift
-            ;;
-    esac
+# Procesar argumentos
+POSITIONAL_ARGS=()
+USE_CACHE=false
+DEPENDENCIES_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --path)
+      PROJECT_PATH="$2"
+      PYTHON_ARGS="$PYTHON_ARGS --path $PROJECT_PATH"  # Quitamos las comillas extra
+      shift 2
+      ;;
+    --cached)
+      USE_CACHE=true
+      PYTHON_ARGS="$PYTHON_ARGS --use-cache"
+      shift
+      ;;
+    --dependencies-only|-d)
+      DEPENDENCIES_ONLY=true
+      PYTHON_ARGS="$PYTHON_ARGS --dependencies-only"
+      shift
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
 done
 
 # Imprimir información de depuración
@@ -39,12 +50,13 @@ source "$VENV_PATH/bin/activate"
 
 # Instalar dependencias
 pip install requests
+pip install PyYAML
 
 # Ejecutar script de Python con todos los argumentos
 echo "🏃 Ejecutando script principal"
-python "$SCRIPT_DIR/main.py" $PYTHON_ARGS
+eval "python \"$SCRIPT_DIR/main.py\" $PYTHON_ARGS"
 
 # Desactivar entorno virtual
 deactivate
 
-echo "✅ Proceso completado"
+#echo "✅ Proceso completado"

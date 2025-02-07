@@ -9,7 +9,10 @@ from datetime import datetime, timedelta
 class VersionChecker:
     def __init__(self, use_cache_only=False):
         print("\n🔧 Inicializando VersionChecker")
-        print(f"  Mode: {'Solo Caché' if use_cache_only else 'Caché + API'}")
+        print(f"  Mode: {'Solo Caché' if use_cache_only else 'Tiempo Real'}")
+        
+        # Guardar la configuración de caché
+        self.use_cache_only = use_cache_only
         
         # Crear directorio results si no existe
         self.results_dir = "results"
@@ -24,7 +27,6 @@ class VersionChecker:
         print(f"  ⏰ Duración de caché: {self.cache_duration}")
         
         self.version_cache = self._load_cache()
-        self.use_cache_only = use_cache_only
         
         print(f"  📦 Entradas en caché: {len(self.version_cache)}")
         if len(self.version_cache) > 0:
@@ -34,43 +36,47 @@ class VersionChecker:
 
     def _load_cache(self):
         """Cargar cache desde archivo"""
-        try:
-            if os.path.exists(self.cache_file):
-                print(f"\n📂 Cargando caché desde: {self.cache_file}")
-                with open(self.cache_file, 'r') as f:
-                    cache_data = json.load(f)
-                    current_time = datetime.now()
-                    valid_cache = {}
-                    expired_entries = 0
-                    
-                    for key, value in cache_data.items():
-                        try:
-                            cached_time = datetime.fromisoformat(value['timestamp'])
-                            time_diff = current_time - cached_time
-                            
-                            if time_diff < self.cache_duration:
-                                valid_cache[key] = value
-                                print(f"  ✅ Entrada válida: {key}")
-                                print(f"     Versión: {value['version']}")
-                                print(f"     Edad: {time_diff}")
-                            else:
-                                expired_entries += 1
-                                print(f"  ⏰ Entrada expirada: {key}")
-                                print(f"     Edad: {time_diff}")
-                        except Exception as e:
-                            print(f"  ❌ Error procesando entrada {key}: {str(e)}")
-                    
-                    print(f"\n📊 Resumen de caché:")
-                    print(f"  Total entradas: {len(cache_data)}")
-                    print(f"  Entradas válidas: {len(valid_cache)}")
-                    print(f"  Entradas expiradas: {expired_entries}")
-                    
-                    return valid_cache
-            else:
-                print(f"\n📝 No existe archivo de caché en: {self.cache_file}")
-                print("  Se creará uno nuevo cuando se obtengan versiones")
-        except Exception as e:
-            print(f"\n❌ Error cargando caché: {str(e)}")
+        if self.use_cache_only:
+            try:
+                if os.path.exists(self.cache_file):
+                    print(f"\n📂 Cargando caché desde: {self.cache_file}")
+                    with open(self.cache_file, 'r') as f:
+                        cache_data = json.load(f)
+                        current_time = datetime.now()
+                        valid_cache = {}
+                        expired_entries = 0
+                        
+                        for key, value in cache_data.items():
+                            try:
+                                cached_time = datetime.fromisoformat(value['timestamp'])
+                                time_diff = current_time - cached_time
+                                
+                                if time_diff < self.cache_duration:
+                                    valid_cache[key] = value
+                                    print(f"  ✅ Entrada válida: {key}")
+                                    print(f"     Versión: {value['version']}")
+                                    print(f"     Edad: {time_diff}")
+                                else:
+                                    expired_entries += 1
+                                    print(f"  ⏰ Entrada expirada: {key}")
+                                    print(f"     Edad: {time_diff}")
+                            except Exception as e:
+                                print(f"  ❌ Error procesando entrada {key}: {str(e)}")
+                        
+                        print(f"\n📊 Resumen de caché:")
+                        print(f"  Total entradas: {len(cache_data)}")
+                        print(f"  Entradas válidas: {len(valid_cache)}")
+                        print(f"  Entradas expiradas: {expired_entries}")
+                        
+                        return valid_cache
+                else:
+                    print(f"\n📝 No existe archivo de caché en: {self.cache_file}")
+                    print("  Se creará uno nuevo cuando se obtengan versiones")
+            except Exception as e:
+                print(f"\n❌ Error cargando caché: {str(e)}")
+        else:
+            print("\n🔄 Modo sin caché activado - Consultando versiones en tiempo real")
+        
         return {}
 
     def _save_cache(self):
@@ -278,19 +284,14 @@ class VersionChecker:
         return "🟢"
 
     def get_latest_version(self, url):
-        """
-        Determinar el tipo de repositorio y obtener la última versión disponible
-        """
+        """Obtener última versión disponible"""
         print(f"\n🔍 Buscando última versión para: {url}")
 
-        # Verificar cache primero
-        if self.use_cache_only:
-            if url in self.version_cache:
-                cached_version = self.version_cache[url]['version']
-                print(f"📦 Usando versión en caché: {cached_version}")
-                return cached_version
-            print("❌ No se encontró versión en caché")
-            return "N/A (cache)"
+        # Si no estamos usando caché, no verificamos el caché
+        if not self.use_cache_only and url in self.version_cache:
+            cached_version = self.version_cache[url]['version']
+            print(f"📦 Obteniendo versión actualizada (ignorando caché)")
+            return self._get_version_from_source(url)
 
         if url in self.version_cache:
             cache_entry = self.version_cache[url]
@@ -299,22 +300,18 @@ class VersionChecker:
                 print(f"📦 Usando versión en caché: {cache_entry['version']}")
                 return cache_entry['version']
 
+        return self._get_version_from_source(url)
+    
+    def _get_version_from_source(self, url):
+        """Obtener última versión desde la fuente (GitHub/GitLab)"""
         try:
-            # Determinar el tipo de repositorio y obtener la versión
             if "github.com" in url:
-                print("🔄 Consultando API de GitHub...")
-                version = self.get_latest_github_version(url)
+                return self.get_latest_github_version(url)
             elif "gitlab.com" in url:
-                print("🔄 Consultando API de GitLab...")
-                version = self.get_latest_gitlab_version(url)
+                return self.get_latest_gitlab_version(url)
             else:
-                print("❌ URL no soportada (no es GitHub ni GitLab)")
-                version = "N/A"
-            
-            print(f"📝 Versión obtenida: {version}")
-            self._cache_version(url, version)
-            return version
-            
+                print(f"❌ URL no soportada (no es GitHub ni GitLab): {url}")
+                return "N/A"
         except Exception as e:
-            print(f"❌ Error al obtener la versión: {str(e)}")
+            print(f"❌ Error obteniendo versión: {str(e)}")
             return "N/A"

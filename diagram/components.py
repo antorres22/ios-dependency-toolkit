@@ -42,12 +42,23 @@ def add_version_legend(root, y_position, x_position, parent):
         state_geo.set('height', '30')
         state_geo.set('as', 'geometry')
 
-def add_statistics(root, y_position, x_position, spm_modules, unique_dependencies, version_checker, parent):
+def add_statistics(root, y_position, x_position, spm_modules, unique_dependencies, version_checker, parent, pod_dependencies=None):
     """Añade estadísticas del proyecto con información detallada de dependencias"""
-    stats_id = f'statistics_{uuid.uuid4().hex[:8]}'
-    total_modules = sum(len(pkg['modules']) for pkg in spm_modules)
+    stats_id = _create_statistics_container(root, x_position, y_position, parent)
+    y_offset = _add_general_info(root, stats_id, spm_modules, unique_dependencies, pod_dependencies)
     
-    # Contenedor principal de estadísticas
+    # Sección SPM
+    if unique_dependencies:
+        y_offset = add_spm_dependencies_section(root, stats_id, y_offset, unique_dependencies, version_checker)
+    
+    # Sección Pods
+    if pod_dependencies:
+        y_offset = add_pods_dependencies_section(root, stats_id, y_offset, pod_dependencies, version_checker)
+
+def _create_statistics_container(root, x_position, y_position, parent):
+    """Crea el contenedor principal de estadísticas"""
+    stats_id = f'statistics_{uuid.uuid4().hex[:8]}'
+    
     stats = ET.SubElement(root, 'mxCell')
     stats.set('id', stats_id)
     stats.set('value', 'Estadísticas')
@@ -55,93 +66,187 @@ def add_statistics(root, y_position, x_position, spm_modules, unique_dependencie
     stats.set('vertex', '1')
     stats.set('parent', parent)
     
-    # Ajustar dimensiones
     width = 380
-    height = 120 + (len(unique_dependencies) * 100)
-    
     geo = ET.SubElement(stats, 'mxGeometry')
     geo.set('x', str(x_position))
     geo.set('y', str(y_position))
     geo.set('width', str(width))
-    geo.set('height', str(height))
+    geo.set('height', '2000')  # Altura dinámica
     geo.set('as', 'geometry')
     
-    # Información general
+    return stats_id
+def _add_general_info(root, stats_id, spm_modules, unique_dependencies, pod_dependencies):
+    """Añade la información general de estadísticas"""
+    total_spm_modules = sum(len(pkg['modules']) for pkg in spm_modules)
+    total_pods = len(pod_dependencies) if pod_dependencies else 0
+    width = 380
+    
     general_info = ET.SubElement(root, 'mxCell')
     general_info.set('id', f'general_info_{stats_id}')
     general_info.set('value', 
         '<p style="margin:0px;">' +
-        f'Total de Módulos: {total_modules}</p><p style="margin:0px;">' + 
-        f'Total de Dependencias Externas: {len(unique_dependencies)}</p><p style="margin:0px;">' +
-        f'Total de Ficheros: {len(spm_modules)}</p>')
+        f'Total de Módulos SPM: {total_spm_modules}</p>' +
+        f'<p style="margin:0px;">Total de Pods: {total_pods}</p>' +
+        f'<p style="margin:0px;">Total de Dependencias SPM Externas: {len(unique_dependencies)}</p>' +
+        f'<p style="margin:0px;">Total de Ficheros: {len(spm_modules)}</p>')
     general_info.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
     general_info.set('vertex', '1')
     general_info.set('parent', stats_id)
     
     gen_geo = ET.SubElement(general_info, 'mxGeometry')
-    gen_geo.set('y', '30')  # Empieza después del título
+    gen_geo.set('y', '30')
     gen_geo.set('width', str(width))
-    gen_geo.set('height', '60')
+    gen_geo.set('height', '80')
     gen_geo.set('as', 'geometry')
     
-    # Título de dependencias
-    deps_title = ET.SubElement(root, 'mxCell')
-    deps_title.set('id', f'deps_title_{stats_id}')
-    deps_title.set('value', 'Dependencias Externas')
-    deps_title.set('style', 'text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=12;fontStyle=1')
-    deps_title.set('vertex', '1')
-    deps_title.set('parent', stats_id)
+    return 110  # Retorna el siguiente y_offset
+
+def _add_section_title(root, stats_id, title, y_offset, width):
+    """Añade un título de sección"""
+    title_cell = ET.SubElement(root, 'mxCell')
+    title_cell.set('id', f'title_{stats_id}_{uuid.uuid4().hex[:8]}')
+    title_cell.set('value', title)
+    title_cell.set('style', 'text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=12;fontStyle=1')
+    title_cell.set('vertex', '1')
+    title_cell.set('parent', stats_id)
     
-    deps_title_geo = ET.SubElement(deps_title, 'mxGeometry')
-    deps_title_geo.set('y', '90')
-    deps_title_geo.set('width', str(width))
-    deps_title_geo.set('height', '30')
-    deps_title_geo.set('as', 'geometry')
+    title_geo = ET.SubElement(title_cell, 'mxGeometry')
+    title_geo.set('y', str(y_offset))
+    title_geo.set('width', str(width))
+    title_geo.set('height', '30')
+    title_geo.set('as', 'geometry')
     
-    # Agregar cada dependencia
-    y_offset = 120
+    return y_offset + 30
+
+def _add_separator(root, stats_id, y_offset, width, is_section=False):
+    """Añade un separador entre elementos"""
+    separator = ET.SubElement(root, 'mxCell')
+    separator.set('id', f'separator_{stats_id}_{uuid.uuid4().hex[:8]}')
+    separator.set('value', '')
+    
+    # Estilo diferente para separadores de sección
+    if is_section:
+        style = 'line;strokeWidth=2;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=#666666;'
+        height = '20'
+        y_offset_increment = 30
+    else:
+        style = 'line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=#CCCCCC;'
+        height = '8'
+        y_offset_increment = 8
+    
+    separator.set('style', style)
+    separator.set('vertex', '1')
+    separator.set('parent', stats_id)
+    
+    sep_geo = ET.SubElement(separator, 'mxGeometry')
+    sep_geo.set('y', str(y_offset))
+    sep_geo.set('width', str(width))
+    sep_geo.set('height', height)
+    sep_geo.set('as', 'geometry')
+    
+    return y_offset + y_offset_increment
+
+def add_spm_dependencies_section(root, stats_id, y_offset, unique_dependencies, version_checker):
+    """Añade la sección de dependencias SPM"""
+    width = 380
+    
+    # Agregar título de sección
+    y_offset = _add_section_title(root, stats_id, 'Dependencias SPM Externas', y_offset, width)
+    
+    # Listar dependencias SPM
     for i, dep in enumerate(sorted(unique_dependencies.values(), key=lambda x: x['name'].lower())):
-        # Separador
         if i > 0:
-            separator = ET.SubElement(root, 'mxCell')
-            separator.set('id', f'separator_{stats_id}_{i}')
-            separator.set('value', '')
-            separator.set('style', 'line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=#CCCCCC;')
-            separator.set('vertex', '1')
-            separator.set('parent', stats_id)
-            
-            sep_geo = ET.SubElement(separator, 'mxGeometry')
-            sep_geo.set('y', str(y_offset))
-            sep_geo.set('width', str(width))
-            sep_geo.set('height', '8')
-            sep_geo.set('as', 'geometry')
-            
-            y_offset += 8
+            y_offset = _add_separator(root, stats_id, y_offset, width)
         
-        # Información de la dependencia
-        latest_version = version_checker.get_latest_version(dep['url'])
-        status = version_checker._get_version_status(dep['version'], latest_version, dep['url'])
+        y_offset = add_spm_dependency_info(root, stats_id, dep, version_checker, y_offset, width)
+    
+    return y_offset
+
+def add_spm_dependency_info(root, stats_id, dep, version_checker, y_offset, width):
+    """Añade la información de una dependencia SPM específica"""
+    latest_version = version_checker.get_latest_version(dep['url'])
+    status = version_checker._get_version_status(dep['version'], latest_version, dep['url'])
+    
+    dep_cell = ET.SubElement(root, 'mxCell')
+    dep_cell.set('id', f'dep_info_spm_{stats_id}_{uuid.uuid4().hex[:8]}')
+    dep_cell.set('value',
+        '<p style="margin:0px;font-weight:bold;">' +
+        f'{dep["name"]}</p>' +
+        f'<p style="margin:0px;">URL: {dep["url"]}</p>' +
+        f'<p style="margin:0px;">Versión actual: {dep["version"]}</p>' +
+        f'<p style="margin:0px;">Última versión disponible: {latest_version}</p>' +
+        f'<p style="margin:0px;">Status: {status}</p>')
+    dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
+    dep_cell.set('vertex', '1')
+    dep_cell.set('parent', stats_id)
+    
+    dep_geo = ET.SubElement(dep_cell, 'mxGeometry')
+    dep_geo.set('y', str(y_offset))
+    dep_geo.set('width', str(width))
+    dep_geo.set('height', '80')
+    dep_geo.set('as', 'geometry')
+    
+    return y_offset + 90
+
+def add_pods_dependencies_section(root, stats_id, y_offset, pod_dependencies, version_checker):
+    """Añade la sección de dependencias de CocoaPods"""
+    width = 380
+    
+    # Agregar separador de sección
+    y_offset = _add_separator(root, stats_id, y_offset, width, is_section=True)
+    
+    # Agregar título de sección
+    y_offset = _add_section_title(root, stats_id, 'Dependencias CocoaPods', y_offset, width)
+    
+    # Listar dependencias Pods
+    for i, pod in enumerate(sorted(pod_dependencies, key=lambda x: x['name'].lower())):
+        if i > 0:
+            y_offset = _add_separator(root, stats_id, y_offset, width)
         
-        dep_cell = ET.SubElement(root, 'mxCell')
-        dep_cell.set('id', f'dep_info_{stats_id}_{i}')
-        dep_cell.set('value',
-            '<p style="margin:0px;font-weight:bold;">' +
-            f'{dep["name"]}</p>' +
-            f'<p style="margin:0px;">URL: {dep["url"]}</p>' +
-            f'<p style="margin:0px;">Versión actual: {dep["version"]}</p>' +
-            f'<p style="margin:0px;">Última versión disponible: {latest_version}</p>' +
-            f'<p style="margin:0px;">Status: {status}</p>')
-        dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
-        dep_cell.set('vertex', '1')
-        dep_cell.set('parent', stats_id)
-        
-        dep_geo = ET.SubElement(dep_cell, 'mxGeometry')
-        dep_geo.set('y', str(y_offset))
-        dep_geo.set('width', str(width))
-        dep_geo.set('height', '80')
-        dep_geo.set('as', 'geometry')
-        
-        y_offset += 90
+        y_offset = _add_pod_dependency_info(root, stats_id, pod, version_checker, y_offset, width)
+    
+    return y_offset
+
+def _add_pod_dependency_info(root, stats_id, pod, version_checker, y_offset, width):
+   """Añade la información de una dependencia Pod específica"""
+   pod_cell = ET.SubElement(root, 'mxCell')
+   pod_cell.set('id', f'dep_info_pod_{stats_id}_{uuid.uuid4().hex[:8]}')
+   
+   # Determinar estado comparando versiones
+   status = "⚫"
+   if pod.get('version', 'N/A') != 'N/A' and pod.get('latest_version', 'N/A') != 'N/A':
+       current_version = pod['version']
+       latest_version = pod['latest_version']
+       try:
+           if current_version == latest_version:
+               status = "🟢"
+           elif current_version < latest_version:
+               status = "🔴"
+           else:
+               status = "🟡"
+       except:
+           status = "⚫"
+   
+   pod_info = f'<p style="margin:0px;font-weight:bold;">{pod["name"]}</p>'
+   pod_info += f'<p style="margin:0px;">Versión actual: {pod.get("version", "N/A")}</p>'
+   pod_info += f'<p style="margin:0px;">Última versión disponible: {pod.get("latest_version", "N/A")}</p>'
+   pod_info += f'<p style="margin:0px;">Status: {status}</p>'
+   
+   if pod.get('url'):
+       pod_info += f'<p style="margin:0px;">Git: {pod["url"]}</p>'
+   
+   pod_cell.set('value', pod_info)
+   pod_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
+   pod_cell.set('vertex', '1')
+   pod_cell.set('parent', stats_id)
+   
+   pod_geo = ET.SubElement(pod_cell, 'mxGeometry')
+   pod_geo.set('y', str(y_offset))
+   pod_geo.set('width', str(width))
+   pod_geo.set('height', '80')
+   pod_geo.set('as', 'geometry')
+   
+   return y_offset + 90
 
 def add_conflicts_section(root, y_position, x_position, conflicts, parent):
     """Añade la sección de conflictos al diagrama"""

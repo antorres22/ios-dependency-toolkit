@@ -7,12 +7,15 @@ import uuid
 import json
 import re
 from collections import defaultdict
+from .pod_analyzer import PodfileAnalyzer
 
 from utils.version_checker import VersionChecker
 from diagram.components import (
     add_version_legend,
     add_statistics,
     add_conflicts_section,
+    add_spm_dependencies_section,
+    add_pods_dependencies_section
 )
 
 class SPMDiagramGenerator:
@@ -21,9 +24,13 @@ class SPMDiagramGenerator:
         self.spm_modules = []
         self.app_name = os.path.basename(project_root)
         self.logger = self.setup_logging()
-        self.version_checker = VersionChecker(use_cache_only=use_cache)
+        self.version_checker = VersionChecker(use_cache_only=not use_cache)
         self.unique_dependencies = {}
         self.layers = defaultdict(list)
+        
+        # Añadir el analizador de Pods
+        self.pod_analyzer = PodfileAnalyzer(project_root)
+        self.pod_dependencies = []
 
     def setup_logging(self):
         """Configura el sistema de logging"""
@@ -32,6 +39,78 @@ class SPMDiagramGenerator:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         return logging.getLogger(__name__)
+    
+    def analyze_dependencies(self):
+        """Analiza tanto las dependencias SPM como las de Cocoapods"""
+        self.logger.info("\n🔍 Analizando dependencias...")
+        
+        # Analizar SPM
+        self.logger.info("📦 Analizando módulos SPM")
+        self.find_spm_modules()
+        
+        # Analizar Pods
+        self.logger.info("📦 Analizando Pods")
+        podfile_path = self.pod_analyzer.find_podfile()
+        if podfile_path:
+            self.pod_dependencies = self.pod_analyzer.parse_podfile(podfile_path)
+            self.logger.info(f"✅ Encontradas {len(self.pod_dependencies)} dependencias en Pods")
+        else:
+            self.logger.info("ℹ️ No se encontraron dependencias de Pods")
+
+    def generate_dependencies_json(self):
+        """Genera un JSON con la información de todas las dependencias"""
+        self.analyze_dependencies()
+        dependencies_info = {}
+        
+        # Procesar dependencias SPM
+        for dependency in self.unique_dependencies.values():
+            latest_version = self.version_checker.get_latest_version(dependency['url'])
+            status = self.version_checker._get_version_status(dependency['version'], latest_version, dependency['url'])
+            
+            dependencies_info[dependency['name']] = {
+                'url': dependency['url'],
+                'version_used': dependency['version'],
+                'latest_version': latest_version,
+                'timestamp': datetime.now().isoformat(),
+                'status': status,
+                'type': 'spm'
+            }
+        
+        # Procesar dependencias Pods
+        if self.pod_dependencies:
+            for pod in self.pod_dependencies:
+                if pod['name'] not in dependencies_info:  # Evitar duplicados
+                    latest_version = pod.get('latest_version', 'N/A')
+                    status = "⚫"
+                    if pod.get('version', 'N/A') != 'N/A' and latest_version != 'N/A':
+                        try:
+                            if pod['version'] == latest_version:
+                                status = "🟢"
+                            elif pod['version'] < latest_version:
+                                status = "🔴"
+                            else:
+                                status = "🟡"
+                        except:
+                            status = "⚫"
+                    
+                    dependencies_info[pod['name']] = {
+                        'url': pod.get('url', 'N/A'),
+                        'version_used': pod.get('version', 'N/A'),
+                        'latest_version': latest_version,
+                        'timestamp': datetime.now().isoformat(),
+                        'status': status,
+                        'type': 'pod'
+                    }
+        
+        # Guardar el JSON
+        output_file = os.path.join('results', 'dependencies_info.json')
+        os.makedirs('results', exist_ok=True)
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(dependencies_info, f, indent=2, ensure_ascii=False)
+        
+        self.logger.info(f"\n📝 Información de dependencias guardada en: {output_file}")
+        return output_file
 
     def find_spm_modules(self):
         """Buscar módulos de Swift Package Manager en el proyecto"""
@@ -189,7 +268,10 @@ class SPMDiagramGenerator:
         return conflicts
 
     def generate_drawio_diagram(self):
-        """Generar diagrama Draw.io con módulos SPM agrupados en packages verticalmente"""
+        """Generar diagrama Draw.io con módulos SPM y Pods agrupados"""
+        # Analizar todas las dependencias
+        self.analyze_dependencies()
+
         # Calcular dimensiones necesarias
         dimensions = self._calculate_dimensions()
         
@@ -202,14 +284,26 @@ class SPMDiagramGenerator:
         # Agregar nodo de la aplicación
         self._add_app_node(root, dimensions)
         
-        # Generar paquetes y módulos
-        module_cells = self._generate_packages_and_modules(root, dimensions)
+        # Agregar encabezados de secciones
+        self._add_section_headers(root, dimensions)
         
-        # Agregar conexiones entre módulos
+        # Calcular posición inicial para centrado
+        current_x = (dimensions['canvas_width'] - dimensions['total_width']) / 2
+        
+        # Generar sección SPM
+        module_cells = self._generate_packages_and_modules(root, dimensions, current_x)
+        
+        # Agregar conexiones entre módulos SPM
         self._add_dependencies_connections(root, module_cells)
         
+        # Generar sección Pods si existe
+        if self.pod_dependencies:
+            pod_section_x = (dimensions['canvas_width'] - (3 * (dimensions['module_width'] + dimensions['module_spacing']))) / 2
+            self._generate_pods_section(root, dimensions, pod_section_x)
+        
         # Agregar estadísticas y leyenda
-        self._add_statistics_and_legend(root, dimensions)
+        stats_x = current_x + dimensions['total_width'] + 40
+        self._add_statistics_and_legend(root, dimensions, stats_x)
         
         # Generar y guardar el archivo
         return self._save_diagram(mxfile)
@@ -222,34 +316,65 @@ class SPMDiagramGenerator:
             'module_spacing': 80,
             'package_spacing': 420,
             'package_padding': 40,
+            'section_spacing': 200,  # Espacio entre sección SPM y Pods
+            'package_y': 120,  # Añadimos la posición Y inicial para los paquetes
         }
         
-        # Calcular altura del canvas
-        max_modules_per_package = max(len(pkg['modules']) for pkg in self.spm_modules)
-        min_height_needed = dimensions['package_padding'] + (max_modules_per_package * (dimensions['module_height'] + dimensions['module_spacing']))
-        dimensions['canvas_height'] = max(2000, min_height_needed + 500)
-        
-        # Calcular ancho del canvas
-        total_package_width = 0
+        # Calcular anchos de paquetes SPM
         package_widths = []
-        
         for package_group in self.spm_modules:
             package_width = dimensions['module_width'] + (2 * dimensions['package_padding'])
             package_widths.append(package_width)
-            total_package_width += package_width
+        dimensions['package_widths'] = package_widths
         
-        total_width = (total_package_width + 
-                    ((len(self.spm_modules) - 1) * dimensions['package_spacing']) + 
-                    800)
+        # Calcular dimensiones para SPM
+        max_spm_modules_per_package = max(len(pkg['modules']) for pkg in self.spm_modules) if self.spm_modules else 0
+        spm_height = dimensions['package_padding'] + (max_spm_modules_per_package * (dimensions['module_height'] + dimensions['module_spacing']))
         
+        # Calcular dimensiones para Pods
+        pods_height = 0
+        if self.pod_dependencies:
+            pods_per_row = 3  # Número de pods por fila
+            num_pod_rows = (len(self.pod_dependencies) + pods_per_row - 1) // pods_per_row
+            pods_height = (num_pod_rows * (dimensions['module_height'] + dimensions['module_spacing']))
+        
+        # Altura total necesaria
+        total_height = spm_height + (pods_height if pods_height > 0 else 0) + dimensions['section_spacing']
+        dimensions['canvas_height'] = max(2000, total_height + 500)
+        
+        # Calcular ancho total y agregarlo a dimensions
+        total_width = self._calculate_total_width(dimensions)
+        dimensions['total_width'] = total_width
+        dimensions['canvas_width'] = max(3000, total_width + 800)  # Agregar espacio para estadísticas
+        
+        # Posiciones iniciales
         dimensions.update({
-            'canvas_width': max(3000, total_width),
-            'package_y': 120,
-            'package_widths': package_widths,
-            'total_width': total_width
+            'spm_start_y': 120,
+            'pods_start_y': spm_height + dimensions['section_spacing'] + 120 if pods_height > 0 else 0,
         })
         
         return dimensions
+
+    def _calculate_total_width(self, dimensions):
+        """Calcula el ancho total necesario para el diagrama"""
+        # Ancho para sección SPM
+        total_package_width = 0
+        for package_group in self.spm_modules:
+            package_width = dimensions['module_width'] + (2 * dimensions['package_padding'])
+            total_package_width += package_width
+        
+        spm_width = total_package_width + ((len(self.spm_modules) - 1) * dimensions['package_spacing'])
+        
+        # Ancho para sección Pods
+        pods_width = 0
+        if self.pod_dependencies:
+            pods_per_row = 3
+            num_pods = len(self.pod_dependencies)
+            num_columns = min(pods_per_row, num_pods)
+            pods_width = (num_columns * dimensions['module_width']) + ((num_columns - 1) * dimensions['module_spacing'])
+        
+        # Retornar el máximo entre el ancho de SPM y Pods
+        return max(spm_width, pods_width)
 
     def _create_base_structure(self, dimensions):
         """Crea la estructura base del XML para el diagrama"""
@@ -341,20 +466,19 @@ class SPMDiagramGenerator:
         app_geo.set('height', str(app_height))
         app_geo.set('as', 'geometry')
     
-    def _generate_packages_and_modules(self, root, dimensions):
+    def _generate_packages_and_modules(self, root, dimensions, current_x):
         """Genera los paquetes y módulos del diagrama"""
         module_cells = {}
-        current_x = (dimensions['canvas_width'] - dimensions['total_width']) / 2
         
         for pkg_idx, package_group in enumerate(self.spm_modules):
             modules = package_group['modules']
             directory = package_group['directory']
             
-            # Calcular dimensiones del paquete
+            # Calcular altura real necesaria para el paquete
             package_height = (len(modules) * (dimensions['module_height'] + dimensions['module_spacing'])) - dimensions['module_spacing'] + (2 * dimensions['package_padding'])
             package_width = dimensions['package_widths'][pkg_idx]
             
-            # Crear paquete
+            # Crear el contenedor del paquete
             package_cell = self._create_package(root, pkg_idx, directory, current_x, dimensions['package_y'], 
                                             package_width, package_height)
             
@@ -487,35 +611,68 @@ class SPMDiagramGenerator:
         label.set('y', '0')
         label.set('as', 'offset')
 
-    def _add_statistics_and_legend(self, root, dimensions):
-        """Agrega las estadísticas y leyendas al diagrama"""
-        stats_container = ET.SubElement(root, 'mxCell')
-        stats_container.set('id', 'stats_container')
-        stats_container.set('value', '')
-        stats_container.set('style', 'group')
-        stats_container.set('vertex', '1')
-        stats_container.set('parent', 'base_layer')
+    def _add_statistics_and_legend(self, root, dimensions, x_position):
+        """Agrega estadísticas y leyenda con las dependencias en columnas"""
+        width = 380
+        base_y = dimensions['package_y']
         
-        current_x = dimensions['canvas_width'] - 440  # Ajuste para posicionar estadísticas
+        # Leyenda de versiones primero (arriba)
+        add_version_legend(root, base_y, x_position + width/2, 'base_layer')
+        legend_height = 150  # altura aproximada de la leyenda
         
-        stats_container_geo = ET.SubElement(stats_container, 'mxGeometry')
-        stats_container_geo.set('x', str(current_x))
-        stats_container_geo.set('y', str(dimensions['package_y']))
-        stats_container_geo.set('width', '400')
-        stats_container_geo.set('height', '2000')  # Aumentamos la altura para dar más espacio
-        stats_container_geo.set('as', 'geometry')
+        # Ajustar posición Y inicial para los contenedores
+        containers_y = base_y + legend_height + 20
         
-        # Añadimos espaciado vertical entre elementos
-        legend_y = 20  # Empezamos más abajo
-        stats_y = legend_y + 200  # Más espacio entre leyenda y estadísticas
-        conflicts_y = stats_y + 800  # Más espacio para las estadísticas
+        # Contenedor SPM
+        spm_container = ET.SubElement(root, 'mxCell')
+        spm_id = f'statistics_spm_{uuid.uuid4().hex[:8]}'
+        spm_container.set('id', spm_id)
+        spm_container.set('value', 'Dependencias SPM Externas')
+        spm_container.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#f5f5f5;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#666666;fontSize=12;')
+        spm_container.set('vertex', '1')
+        spm_container.set('parent', 'base_layer')
         
-        add_version_legend(root, legend_y, 0, 'stats_container')
-        add_statistics(root, stats_y, 0, self.spm_modules, self.unique_dependencies, self.version_checker, 'stats_container')
+        spm_geo = ET.SubElement(spm_container, 'mxGeometry')
+        spm_geo.set('x', str(x_position))
+        spm_geo.set('y', str(containers_y))
+        spm_geo.set('width', str(width))
+        spm_geo.set('height', '2000')
+        spm_geo.set('as', 'geometry')
         
-        conflicts = self.analyze_dependency_conflicts()
-        if conflicts:
-            add_conflicts_section(root, conflicts_y, 0, conflicts, 'stats_container')
+        # SPM Dependencies
+        y_offset = 30  # Empezar después del título
+        if self.unique_dependencies:
+            y_offset = add_spm_dependencies_section(root, spm_id, y_offset, self.unique_dependencies, self.version_checker)
+            spm_container.set('height', str(y_offset + 30))  # Ajustar altura del contenedor SPM
+        
+        # Contenedor Pods
+        if self.pod_dependencies:
+            pods_container = ET.SubElement(root, 'mxCell')
+            pods_id = f'statistics_pods_{uuid.uuid4().hex[:8]}'
+            pods_container.set('id', pods_id)
+            pods_container.set('value', 'Dependencias CocoaPods')
+            pods_container.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#f5f5f5;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#666666;fontSize=12;')
+            pods_container.set('vertex', '1')
+            pods_container.set('parent', 'base_layer')
+            
+            # Calcular altura real necesaria para pods
+            num_pods = len(self.pod_dependencies)
+            pod_cell_height = 90  # Altura de cada celda de pod
+            separator_height = 8  # Altura de cada separador
+            title_height = 30    # Altura del título
+            padding = 40        # Padding adicional
+            
+            # Altura total = título + (altura_celda * num_pods) + (altura_separador * (num_pods-1)) + padding
+            pod_height = title_height + (pod_cell_height * num_pods) + (separator_height * (num_pods - 1)) + padding
+            
+            pods_geo = ET.SubElement(pods_container, 'mxGeometry')
+            pods_geo.set('x', str(x_position + width + 40))
+            pods_geo.set('y', str(containers_y))
+            pods_geo.set('width', str(width))
+            pods_geo.set('height', str(pod_height))
+            pods_geo.set('as', 'geometry')
+            
+            pods_y_offset = add_pods_dependencies_section(root, pods_id, 30, self.pod_dependencies, self.version_checker)
 
     def _save_diagram(self, mxfile):
         """Guarda el diagrama en un archivo XML"""
@@ -537,3 +694,82 @@ class SPMDiagramGenerator:
         
         self.logger.info(f"Diagrama generado exitosamente: {output_file}")
         return output_file
+    def _add_section_headers(self, root, dimensions):
+        """Agrega los encabezados de las secciones SPM y Pods"""
+        # Encabezado SPM
+        spm_header = ET.SubElement(root, 'mxCell')
+        spm_header.set('id', 'spm_header')
+        spm_header.set('value', 'Swift Package Manager Dependencies')
+        spm_header.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1')
+        spm_header.set('vertex', '1')
+        spm_header.set('parent', 'base_layer')
+        
+        header_geo = ET.SubElement(spm_header, 'mxGeometry')
+        header_geo.set('x', str((dimensions['canvas_width'] - 300) / 2))
+        header_geo.set('y', str(dimensions['spm_start_y'] - 50))
+        header_geo.set('width', '300')
+        header_geo.set('height', '30')
+        header_geo.set('as', 'geometry')
+        
+        if self.pod_dependencies:
+            # Encabezado Pods
+            pods_header = ET.SubElement(root, 'mxCell')
+            pods_header.set('id', 'pods_header')
+            pods_header.set('value', 'CocoaPods Dependencies')
+            pods_header.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1')
+            pods_header.set('vertex', '1')
+            pods_header.set('parent', 'base_layer')
+            
+            pods_header_geo = ET.SubElement(pods_header, 'mxGeometry')
+            pods_header_geo.set('x', str((dimensions['canvas_width'] - 300) / 2))
+            pods_header_geo.set('y', str(dimensions['pods_start_y'] - 50))
+            pods_header_geo.set('width', '300')
+            pods_header_geo.set('height', '30')
+            pods_header_geo.set('as', 'geometry')
+
+    def _generate_pods_section(self, root, dimensions, current_x):
+        """Genera la sección de dependencias de Cocoapods"""
+        if not self.pod_dependencies:
+            return
+        
+        pods_per_row = 3
+        module_width = dimensions['module_width']
+        module_height = dimensions['module_height']
+        module_spacing = dimensions['module_spacing']
+        
+        for i, pod in enumerate(self.pod_dependencies):
+            row = i // pods_per_row
+            col = i % pods_per_row
+            
+            x_pos = current_x + (col * (module_width + module_spacing))
+            y_pos = dimensions['pods_start_y'] + (row * (module_height + module_spacing))
+            
+            # Crear el módulo para el pod
+            pod_cell = ET.SubElement(root, 'mxCell')
+            pod_cell.set('id', f'pod_{i}')
+            pod_cell.set('vertex', '1')
+            pod_cell.set('parent', 'base_layer')
+            
+            # Estilo especial para pods
+            style = 'shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;'
+            style += 'whiteSpace=wrap;html=1;jettyWidth=20;jettyHeight=10;'
+            style += 'fillColor=#fff2cc;strokeColor=#d6b656;'  # Color distintivo para pods
+            
+            pod_cell.set('style', style)
+            
+            # Contenido del pod
+            pod_content = f'<p style="margin:4px;margin-top:6px;text-align:center;font-weight:bold;">{pod["name"]}</p>'
+            if 'version' in pod:
+                pod_content += f'<hr size="1"/><p style="margin:2px;margin-left:8px;font-size:10px">Version: {pod["version"]}</p>'
+            if 'url' in pod:
+                pod_content += f'<p style="margin:2px;margin-left:8px;font-size:10px">Git: {pod["url"]}</p>'
+                
+            pod_cell.set('value', pod_content)
+            
+            # Geometría del pod
+            pod_geo = ET.SubElement(pod_cell, 'mxGeometry')
+            pod_geo.set('x', str(x_pos))
+            pod_geo.set('y', str(y_pos))
+            pod_geo.set('width', str(module_width))
+            pod_geo.set('height', str(module_height))
+            pod_geo.set('as', 'geometry')
