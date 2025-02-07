@@ -58,6 +58,33 @@ python3 main.py --path /path/to/ios/project --cached
 
 The script generates a .drawio diagram file in the project directory showing SPM module dependencies.
 
+## Dependency Analysis
+
+The project includes functionality to analyze the update status of dependencies, both for Swift Package Manager and CocoaPods.
+
+### Generate Dependencies Report
+
+To generate a detailed report of the dependencies status:
+
+```bash
+sh execute.sh --path /path/to/project --dependencies-only
+
+Of 
+
+python3 main.py --path /path/to/project --dependencies-only
+```
+
+This will generate a JSON file in the results directory containing information about all dependencies, including:
+
+Current version
+Latest available version
+Update status:
+
+- 🟢 Up to date
+- 🔴 Major version difference
+- 🟡 Minor or patch difference
+- ⚫ Status not determined
+
 ## Notes
 
 If no path is provided, the script will prompt for a project path
