@@ -84,18 +84,18 @@ def main():
        return
    
    try:
-       # Crear instancia del generador
-       diagram_generator = SPMDiagramGenerator(project_path, use_cache=args.use_cache)
-       
-       if args.dependencies_only:
-           # Solo generar JSON de dependencias
-           output_file = diagram_generator.generate_dependencies_json()
-           logging.info(f"\n✅ Archivo JSON generado: {output_file}")
-       else:
-           # Generar diagrama completo
-           output_file = diagram_generator.generate_drawio_diagram()
-           logging.info(f"\n📊 Diagrama generado exitosamente en: {output_file}")
-           logging.info("\nPuedes abrir este archivo en draw.io o en la aplicación de escritorio Diagrams")
+        # Crear instancia del generador
+        diagram_generator = SPMDiagramGenerator(project_path, use_cache=args.use_cache)
+        
+        if args.dependencies_only:
+            # Solo generar JSON de dependencias
+            output_file = diagram_generator.generate_dependencies_json()
+            logging.info(f"\n✅ Archivo JSON generado: {output_file}")
+        else:
+            # Generar diagrama unificado
+            unified_diagram = diagram_generator.generate_unified_diagram()
+            logging.info(f"\n✅ Diagrama unificado generado en: {unified_diagram}")
+            logging.info("\nPuedes abrir este archivo en draw.io o en la aplicación de escritorio Diagrams")
            
    except Exception as e:
        logging.error(f"\n❌ Error durante la generación del diagrama: {str(e)}")

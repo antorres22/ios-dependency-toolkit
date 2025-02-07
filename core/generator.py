@@ -266,6 +266,253 @@ class SPMDiagramGenerator:
                     })
         
         return conflicts
+    
+    def generate_unified_diagram(self):
+        """
+        Genera un único archivo XML que contiene tanto el diagrama principal
+        como las páginas individuales de cada módulo.
+        """
+        self.logger.info("\n🔄 Generando diagrama unificado...")
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Crear el elemento raíz mxfile
+        mxfile = ET.Element('mxfile')
+        mxfile.set('host', 'app.diagrams.net')
+        mxfile.set('modified', datetime.now().isoformat())
+        mxfile.set('agent', 'Python SPM Diagram Generator v2.0')
+        mxfile.set('version', '21.6.8')
+        mxfile.set('type', 'device')
+        
+        # Generar y añadir el diagrama principal
+        self.logger.info("📊 Generando diagrama principal...")
+        main_mxfile = self.generate_drawio_diagram()
+        main_diagram = main_mxfile.find('diagram')
+        if main_diagram is not None:
+            main_diagram.set('name', 'Diagrama Principal')  # Asegurar nombre correcto
+            mxfile.append(main_diagram)
+        
+        # Generar y añadir los diagramas de módulos individuales
+        self.logger.info("📄 Generando diagramas de módulos individuales...")
+        modules_xml = self.generate_module_pages_diagram()
+        
+        # Parsear el XML de módulos y añadir cada diagrama
+        try:
+            modules_root = ET.fromstring(modules_xml)
+            for diagram in modules_root.findall('diagram'):
+                mxfile.append(diagram)
+        except ET.ParseError as e:
+            self.logger.error(f"Error parseando diagramas de módulos: {e}")
+        
+        # Guardar el archivo combinado
+        results_dir = "results"
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+            self.logger.info(f"📁 Directorio '{results_dir}' creado")
+        
+        output_file = os.path.join(results_dir, f'diagrama_spm_unificado_{timestamp}.xml')
+        
+        # Generar el XML final
+        xml_str = ET.tostring(mxfile, encoding='unicode')
+        xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+        pretty_xml = minidom.parseString(xml_str).toprettyxml(indent="  ")
+        
+        # Guardar el archivo
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(pretty_xml)
+        
+        self.logger.info(f"\n✅ Diagrama unificado generado exitosamente en: {output_file}")
+        self.logger.info("\nPuedes abrir este archivo en draw.io o en la aplicación de escritorio Diagrams")
+        
+        return output_file
+
+    def _generate_main_diagram(self):
+        """
+        Genera el diagrama principal como un elemento XML.
+        Basado en el método generate_drawio_diagram() original.
+        """
+        # Calcular dimensiones
+        dimensions = self._calculate_dimensions()
+        
+        # Crear diagrama principal
+        diagram = ET.Element('diagram')
+        diagram.set('id', str(uuid.uuid4()))
+        diagram.set('name', 'Diagrama Principal')
+        
+        # Crear estructura del modelo
+        model = self._create_base_structure(dimensions)[1].find('root').getparent()
+        diagram.append(model)
+        
+        # Crear layers
+        self._create_layers(model.find('root'))
+        
+        # Añadir nodo de la aplicación
+        self._add_app_node(model.find('root'), dimensions)
+        
+        # Añadir encabezados de secciones
+        self._add_section_headers(model.find('root'), dimensions)
+        
+        # Calcular posición inicial para centrado
+        current_x = (dimensions['canvas_width'] - dimensions['total_width']) / 2
+        
+        # Generar sección SPM
+        module_cells = self._generate_packages_and_modules(model.find('root'), dimensions, current_x)
+        
+        # Añadir conexiones entre módulos SPM
+        self._add_dependencies_connections(model.find('root'), module_cells)
+        
+        # Generar sección Pods si existe
+        if self.pod_dependencies:
+            pod_section_x = (dimensions['canvas_width'] - (3 * (dimensions['module_width'] + dimensions['module_spacing']))) / 2
+            self._generate_pods_section(model.find('root'), dimensions, pod_section_x)
+        
+        # Añadir estadísticas y leyenda
+        stats_x = current_x + dimensions['total_width'] + 40
+        self._add_statistics_and_legend(model.find('root'), dimensions, stats_x)
+        
+        return diagram
+
+    def _create_module_diagram_model(self, idx, package_name, targets):
+        """
+        Crea el modelo para un diagrama de módulo individual.
+        """
+        ITEMS_PER_ROW = 4
+        ITEM_WIDTH = 280
+        CONTAINER_PADDING = 40
+        BASE_HEIGHT = 60
+        DEP_HEIGHT = 20
+        PADDING = 40
+        
+        def calculate_target_height(dependencies):
+            if not dependencies:
+                return BASE_HEIGHT
+            return BASE_HEIGHT + (len(dependencies) * DEP_HEIGHT) + 20
+        
+        if not targets:
+            total_width = ITEM_WIDTH + PADDING
+            total_height = 100
+        else:
+            max_target_height = max(calculate_target_height(deps) for deps in targets.values())
+            ROW_HEIGHT = max_target_height + PADDING
+            num_targets = len(targets)
+            num_rows = (num_targets + ITEMS_PER_ROW - 1) // ITEMS_PER_ROW
+            total_width = min(num_targets, ITEMS_PER_ROW) * (ITEM_WIDTH + PADDING)
+            total_height = 100 + (num_rows * ROW_HEIGHT)
+        
+        # Ajustar dimensiones para el contenedor principal
+        container_width = total_width + (2 * CONTAINER_PADDING)
+        container_height = total_height + (2 * CONTAINER_PADDING)
+        
+        # Crear el modelo y la estructura base
+        model = ET.Element('mxGraphModel')
+        model.set('dx', '1422')
+        model.set('dy', '794')
+        model.set('grid', '1')
+        model.set('gridSize', '10')
+        model.set('guides', '1')
+        model.set('tooltips', '1')
+        model.set('connect', '1')
+        model.set('arrows', '1')
+        model.set('fold', '1')
+        model.set('page', '1')
+        model.set('pageScale', '1')
+        model.set('pageWidth', str(max(850, container_width + 200)))
+        model.set('pageHeight', str(max(1100, container_height + 200)))
+        
+        root = ET.SubElement(model, 'root')
+        
+        # Células base
+        cell0 = ET.SubElement(root, 'mxCell')
+        cell0.set('id', '0')
+        
+        cell1 = ET.SubElement(root, 'mxCell')
+        cell1.set('id', '1')
+        cell1.set('parent', '0')
+        
+        # Título del módulo
+        title_cell = ET.SubElement(root, 'mxCell')
+        title_cell.set('id', f'title_{idx}')
+        title_cell.set('value', package_name)
+        title_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1')
+        title_cell.set('vertex', '1')
+        title_cell.set('parent', '1')
+        
+        title_geo = ET.SubElement(title_cell, 'mxGeometry')
+        title_geo.set('x', str((container_width - 200) / 2 + CONTAINER_PADDING))
+        title_geo.set('y', '20')
+        title_geo.set('width', '200')
+        title_geo.set('height', '40')
+        title_geo.set('as', 'geometry')
+        
+        if targets:
+            # Contenedor principal del módulo
+            module_container = ET.SubElement(root, 'mxCell')
+            module_container.set('id', f'module_container_{idx}')
+            module_container.set('value', f'Módulo: {package_name}')
+            module_container.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;fillColor=#f5f5f5;strokeColor=#666666;')
+            module_container.set('vertex', '1')
+            module_container.set('parent', '1')
+            
+            container_geo = ET.SubElement(module_container, 'mxGeometry')
+            container_geo.set('x', str(CONTAINER_PADDING))
+            container_geo.set('y', '80')
+            container_geo.set('width', str(container_width - 2 * CONTAINER_PADDING))
+            container_geo.set('height', str(container_height - 80))
+            container_geo.set('as', 'geometry')
+            
+            # Agregar targets dentro del contenedor
+            for i, (target_name, dependencies) in enumerate(targets.items()):
+                row = i // ITEMS_PER_ROW
+                col = i % ITEMS_PER_ROW
+                x = 40 + (col * (ITEM_WIDTH + PADDING))
+                y = 40 + (row * ROW_HEIGHT)
+                height = calculate_target_height(dependencies)
+                
+                # Contenedor del target
+                target_cell = ET.SubElement(root, 'mxCell')
+                target_cell.set('id', f'target_{idx}_{i}')
+                target_cell.set('value', '')
+                target_cell.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;fillColor=#dae8fc;strokeColor=#6c8ebf;')
+                target_cell.set('vertex', '1')
+                target_cell.set('parent', f'module_container_{idx}')
+                
+                target_geo = ET.SubElement(target_cell, 'mxGeometry')
+                target_geo.set('x', str(x))
+                target_geo.set('y', str(y))
+                target_geo.set('width', str(ITEM_WIDTH))
+                target_geo.set('height', str(height))
+                target_geo.set('as', 'geometry')
+                
+                # Título del target
+                target_title = ET.SubElement(root, 'mxCell')
+                target_title.set('id', f'target_{idx}_{i}_name')
+                target_title.set('value', target_name)
+                target_title.set('style', 'text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;fontStyle=1')
+                target_title.set('vertex', '1')
+                target_title.set('parent', f'target_{idx}_{i}')
+                
+                title_geo = ET.SubElement(target_title, 'mxGeometry')
+                title_geo.set('y', '0')
+                title_geo.set('width', str(ITEM_WIDTH))
+                title_geo.set('height', '30')
+                title_geo.set('as', 'geometry')
+                
+                # Agregar dependencias
+                if dependencies:
+                    for j, dep in enumerate(dependencies):
+                        dep_cell = ET.SubElement(root, 'mxCell')
+                        dep_cell.set('id', f'target_{idx}_{i}_dep_{j}')
+                        dep_cell.set('value', f'• {dep}')
+                        dep_cell.set('style', 'text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;')
+                        dep_cell.set('vertex', '1')
+                        dep_cell.set('parent', f'target_{idx}_{i}')
+                        
+                        dep_geo = ET.SubElement(dep_cell, 'mxGeometry')
+                        dep_geo.set('y', str(30 + j * DEP_HEIGHT))
+                        dep_geo.set('width', str(ITEM_WIDTH))
+                        dep_geo.set('height', str(DEP_HEIGHT))
+                        dep_geo.set('as', 'geometry')
+        
+        return model
 
     def generate_drawio_diagram(self):
         """Generar diagrama Draw.io con módulos SPM y Pods agrupados"""
@@ -305,8 +552,7 @@ class SPMDiagramGenerator:
         stats_x = current_x + dimensions['total_width'] + 40
         self._add_statistics_and_legend(root, dimensions, stats_x)
         
-        # Generar y guardar el archivo
-        return self._save_diagram(mxfile)
+        return mxfile
 
     def _calculate_dimensions(self):
         """Calcula las dimensiones necesarias para el diagrama"""
@@ -674,32 +920,12 @@ class SPMDiagramGenerator:
             
             pods_y_offset = add_pods_dependencies_section(root, pods_id, 30, self.pod_dependencies, self.version_checker)
 
-    def _save_diagram(self, mxfile):
-        """Guarda el diagrama en un archivo XML"""
-        results_dir = "results"
-        if not os.path.exists(results_dir):
-            os.makedirs(results_dir)
-            self.logger.info(f"📁 Directorio '{results_dir}' creado")
-        
-        tree = ET.ElementTree(mxfile)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(results_dir, f'diagrama_modulos_spm_{timestamp}.xml')
-        
-        xml_str = ET.tostring(mxfile, encoding='unicode')
-        xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
-        pretty_xml = minidom.parseString(xml_str).toprettyxml(indent="  ")
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(pretty_xml)
-        
-        self.logger.info(f"Diagrama generado exitosamente: {output_file}")
-        return output_file
     def _add_section_headers(self, root, dimensions):
         """Agrega los encabezados de las secciones SPM y Pods"""
         # Encabezado SPM
         spm_header = ET.SubElement(root, 'mxCell')
         spm_header.set('id', 'spm_header')
-        spm_header.set('value', 'Swift Package Manager Dependencies')
+        spm_header.set('value', '')
         spm_header.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1')
         spm_header.set('vertex', '1')
         spm_header.set('parent', 'base_layer')
@@ -773,3 +999,150 @@ class SPMDiagramGenerator:
             pod_geo.set('width', str(module_width))
             pod_geo.set('height', str(module_height))
             pod_geo.set('as', 'geometry')
+    
+    def generate_module_pages_diagram(self):
+        """Genera diagrama con páginas separadas para cada módulo SPM"""
+        self.logger.info("\n📄 Generando diagrama de módulos en páginas...")
+        
+        packages_data = {}
+        for package_group in self.spm_modules:
+            for module in package_group['modules']:
+                package_file = os.path.join(self.project_root, module['path'], 'Package.swift')
+                if os.path.exists(package_file):
+                    package_name, targets = self._parse_module_package(package_file)
+                    packages_data[package_file] = (package_name, targets)
+                    self.logger.info(f"✅ Procesado: {package_name}")
+        
+        return self._generate_module_pages_xml(packages_data)
+
+    def _parse_module_package(self, file_path):
+        """Parsea un archivo Package.swift para extraer nombre y targets"""
+        try:
+            with open(file_path, 'r') as file:
+                content = file.read()
+            
+            package_name = re.search(r'name:\s*"([^"]+)"', content)
+            package_name = package_name.group(1) if package_name else "Unknown"
+            
+            targets = {}
+            target_blocks = re.finditer(r'\.target\(\s*name:\s*"([^"]+)".*?dependencies:\s*\[(.*?)\]', content, re.DOTALL)
+            
+            for block in target_blocks:
+                target_name = block.group(1)
+                deps_text = block.group(2)
+                dependencies = set()
+                
+                # Procesar dependencias compuestas
+                composite_deps = re.finditer(r'"([^"]+)\s*\(([^)]+)\)"', deps_text)
+                for dep in composite_deps:
+                    dep_name = f"{dep.group(1)} ({dep.group(2).strip()})"
+                    dependencies.add(dep_name)
+                
+                # Procesar productos
+                product_deps = re.finditer(r'\.product\s*\(\s*name:\s*"([^"]+)"\s*,\s*package:\s*"([^"]+)"\s*\)', deps_text)
+                for dep in product_deps:
+                    dep_name = f"{dep.group(1)} ({dep.group(2)})"
+                    dependencies.add(dep_name)
+                
+                # Procesar dependencias simples
+                simple_deps = re.finditer(r'"([^"(]+?)"(?!\s*\()', deps_text)
+                for dep in simple_deps:
+                    dep_name = dep.group(1)
+                    if not any(dep_name in d for d in dependencies):
+                        dependencies.add(dep_name)
+                
+                targets[target_name] = sorted(list(dependencies))
+            
+            return package_name, targets
+        except Exception as e:
+            self.logger.error(f"Error parseando {file_path}: {str(e)}")
+            return "Unknown", {}
+        
+    def _generate_module_pages_xml(self, packages_data):
+        """Genera el XML para las páginas de módulos"""
+        ITEMS_PER_ROW = 4
+        ITEM_WIDTH = 280
+        CONTAINER_PADDING = 40
+        BASE_HEIGHT = 60
+        DEP_HEIGHT = 20
+        PADDING = 40
+
+        def calculate_target_height(dependencies):
+            if not dependencies:
+                return BASE_HEIGHT
+            return BASE_HEIGHT + (len(dependencies) * DEP_HEIGHT) + 20
+
+        xml = '''<?xml version="1.0" encoding="UTF-8"?>
+        <mxfile host="app.diagrams.net" modified="{}" agent="SPM Module Generator" version="21.6.8" type="device">'''.format(
+            datetime.now().isoformat()
+        )
+
+        for idx, (package_path, (package_name, targets)) in enumerate(packages_data.items()):
+            if not targets:
+                total_width = ITEM_WIDTH + PADDING
+                total_height = 200  # Altura mínima para contenedor vacío
+            else:
+                max_target_height = max(calculate_target_height(deps) for deps in targets.values())
+                ROW_HEIGHT = max_target_height + PADDING
+                num_targets = len(targets)
+                num_rows = (num_targets + ITEMS_PER_ROW - 1) // ITEMS_PER_ROW
+                total_width = min(num_targets, ITEMS_PER_ROW) * (ITEM_WIDTH + PADDING)
+                total_height = 100 + (num_rows * ROW_HEIGHT)
+
+            # Ajustar dimensiones para el contenedor principal
+            container_width = total_width + (2 * CONTAINER_PADDING) + 40  # Margen derecho adicional
+            container_height = total_height + (2 * CONTAINER_PADDING)
+
+            xml += f'''
+        <diagram id="module-{idx}" name="{package_name}">
+            <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="{max(850, container_width + 200)}" pageHeight="{max(1100, container_height + 200)}">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+
+                <mxCell id="title_{idx}" value="{package_name}" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1" vertex="1" parent="1">
+                    <mxGeometry x="{(container_width - 200) / 2 + CONTAINER_PADDING}" y="20" width="200" height="40" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="module_container_{idx}" value="Módulo: {package_name}" style="swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+                    <mxGeometry x="{CONTAINER_PADDING}" y="80" width="{container_width - 2 * CONTAINER_PADDING + 40}" height="{container_height - 80}" as="geometry"/>
+                </mxCell>'''
+
+            if targets:
+                for i, (target_name, dependencies) in enumerate(targets.items()):
+                    row = i // ITEMS_PER_ROW
+                    col = i % ITEMS_PER_ROW
+                    x = 40 + (col * (ITEM_WIDTH + PADDING))
+                    y = 40 + (row * ROW_HEIGHT)
+                    height = calculate_target_height(dependencies)
+
+                    # Contenedor del target
+                    xml += f'''
+                <mxCell id="target_{idx}_{i}" value="" style="swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="module_container_{idx}">
+                    <mxGeometry x="{x}" y="{y}" width="{ITEM_WIDTH}" height="{height}" as="geometry"/>
+                </mxCell>
+                
+                <mxCell id="target_{idx}_{i}_name" value="{target_name}" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;fontStyle=1" vertex="1" parent="target_{idx}_{i}">
+                    <mxGeometry y="0" width="{ITEM_WIDTH}" height="30" as="geometry"/>
+                </mxCell>'''
+
+                    if dependencies:
+                        for j, dep in enumerate(dependencies):
+                            xml += f'''
+                <mxCell id="target_{idx}_{i}_dep_{j}" value="• {dep}" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;" vertex="1" parent="target_{idx}_{i}">
+                    <mxGeometry y="{30 + j * DEP_HEIGHT}" width="{ITEM_WIDTH}" height="{DEP_HEIGHT}" as="geometry"/>
+                </mxCell>'''
+            else:
+                # Agregar mensaje cuando no hay targets
+                xml += f'''
+                <mxCell id="no_targets_{idx}" value="No hay targets definidos" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=2;textColor=#666666;" vertex="1" parent="module_container_{idx}">
+                    <mxGeometry x="{(container_width - 200) / 2}" y="60" width="200" height="30" as="geometry"/>
+                </mxCell>'''
+
+            xml += '''
+            </root>
+            </mxGraphModel>
+        </diagram>'''
+
+        xml += '\n</mxfile>'
+        return xml
