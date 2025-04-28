@@ -97,7 +97,7 @@ class SPMDiagramGenerator:
                 'type': 'spm_module'
             }
         
-        # NUEVO: Añadir análisis de dependencias SPM directas en la aplicación
+        # Procesar dependencias SPM directas de la aplicación
         app_spm_analyzer = AppSPMDependencyAnalyzer(self.project_root)
         app_spm_dependencies = app_spm_analyzer.find_app_spm_dependencies()
         
@@ -105,12 +105,15 @@ class SPMDiagramGenerator:
         for dependency in app_spm_dependencies:
             # Evitar duplicados, solo añadir si no existe o si es un tipo diferente
             if dependency['name'] not in dependencies_info or dependencies_info[dependency['name']]['type'] != 'spm_app_direct':
+                # Extraer versión del campo correcto
+                version_used = dependency.get('version', 'N/A')
+                
                 latest_version = self.version_checker.get_latest_version(dependency['url'])
-                status = self.version_checker._get_version_status(dependency['version'], latest_version, dependency['url'])
+                status = self.version_checker._get_version_status(version_used, latest_version, dependency['url'])
                 
                 dependencies_info[dependency['name']] = {
                     'url': dependency['url'],
-                    'version_used': dependency['version'],
+                    'version_used': version_used,
                     'latest_version': latest_version,
                     'timestamp': datetime.now().isoformat(),
                     'status': status,
