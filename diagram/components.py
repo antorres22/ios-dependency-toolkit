@@ -150,9 +150,6 @@ def add_spm_dependencies_section(root, stats_id, y_offset, unique_dependencies, 
     """Añade la sección de dependencias SPM"""
     width = 380
     
-    # Agregar título de sección
-    y_offset = _add_section_title(root, stats_id, 'Dependencias SPM Externas', y_offset, width)
-    
     # Listar dependencias SPM
     for i, dep in enumerate(sorted(unique_dependencies.values(), key=lambda x: x['name'].lower())):
         if i > 0:
@@ -169,24 +166,43 @@ def add_spm_dependency_info(root, stats_id, dep, version_checker, y_offset, widt
     
     dep_cell = ET.SubElement(root, 'mxCell')
     dep_cell.set('id', f'dep_info_spm_{stats_id}_{uuid.uuid4().hex[:8]}')
+    
+    # Crear el contenido HTML con información adicional si es una dependencia directa
+    dep_type = dep.get('type', 'spm_module')
+    source_info = ""
+    if dep_type == 'spm_app_direct' and 'source' in dep:
+        source_info = f'<p style="margin:0px;">Fuente: {dep["source"]}</p>'
+    
     dep_cell.set('value',
         '<p style="margin:0px;font-weight:bold;">' +
         f'{dep["name"]}</p>' +
         f'<p style="margin:0px;">URL: {dep["url"]}</p>' +
         f'<p style="margin:0px;">Versión actual: {dep["version"]}</p>' +
         f'<p style="margin:0px;">Última versión disponible: {latest_version}</p>' +
+        f'{source_info}' +
         f'<p style="margin:0px;">Status: {status}</p>')
-    dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
+    
+    # Estilo diferente si es una dependencia directa de la app
+    if dep_type == 'spm_app_direct':
+        dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=#e6f2ff;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
+    else:
+        dep_cell.set('style', 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;fontSize=11;whiteSpace=wrap;')
+    
     dep_cell.set('vertex', '1')
     dep_cell.set('parent', stats_id)
+    
+    # Ajustar altura según el contenido
+    cell_height = 80
+    if source_info:
+        cell_height = 100  # Más alto para acomodar la información adicional
     
     dep_geo = ET.SubElement(dep_cell, 'mxGeometry')
     dep_geo.set('y', str(y_offset))
     dep_geo.set('width', str(width))
-    dep_geo.set('height', '80')
+    dep_geo.set('height', str(cell_height))
     dep_geo.set('as', 'geometry')
     
-    return y_offset + 90
+    return y_offset + cell_height + 10  # Añadir un pequeño espacio adicional
 
 def add_pods_dependencies_section(root, stats_id, y_offset, pod_dependencies, version_checker):
     """Añade la sección de dependencias de CocoaPods"""

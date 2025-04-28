@@ -8,7 +8,8 @@ import json
 import re
 from collections import defaultdict
 from .pod_analyzer import PodfileAnalyzer
-
+from .app_spm_analyzer import AppSPMDependencyAnalyzer
+from utils.app_structure_analyzer import AppStructureAnalyzer
 from utils.version_checker import VersionChecker
 from diagram.components import (
     add_version_legend,
@@ -19,7 +20,7 @@ from diagram.components import (
 )
 
 class SPMDiagramGenerator:
-    def __init__(self, project_root, use_cache=False):
+    def __init__(self, project_root, use_cache=False, application_path=None):
         self.project_root = os.path.abspath(project_root)
         self.spm_modules = []
         self.app_name = os.path.basename(project_root)
@@ -31,6 +32,13 @@ class SPMDiagramGenerator:
         # Añadir el analizador de Pods
         self.pod_analyzer = PodfileAnalyzer(project_root)
         self.pod_dependencies = []
+        
+        # Añadir el analizador de estructura de app con la ruta de aplicación directa
+        self.app_analyzer = AppStructureAnalyzer(project_root, application_path)
+        self.app_structure = {}
+        
+        # NUEVO: Añadir referencia para dependencias SPM directas de la aplicación
+        self.app_spm_dependencies = []
 
     def setup_logging(self):
         """Configura el sistema de logging"""
@@ -48,6 +56,12 @@ class SPMDiagramGenerator:
         self.logger.info("📦 Analizando módulos SPM")
         self.find_spm_modules()
         
+        # NUEVO: Analizar dependencias SPM directas de la aplicación
+        self.logger.info("📦 Analizando dependencias SPM directas de la aplicación")
+        app_spm_analyzer = AppSPMDependencyAnalyzer(self.project_root)
+        self.app_spm_dependencies = app_spm_analyzer.find_app_spm_dependencies()
+        self.logger.info(f"✅ Encontradas {len(self.app_spm_dependencies)} dependencias SPM directas en la aplicación")
+        
         # Analizar Pods
         self.logger.info("📦 Analizando Pods")
         podfile_path = self.pod_analyzer.find_podfile()
@@ -56,13 +70,20 @@ class SPMDiagramGenerator:
             self.logger.info(f"✅ Encontradas {len(self.pod_dependencies)} dependencias en Pods")
         else:
             self.logger.info("ℹ️ No se encontraron dependencias de Pods")
+            
+        # Analizar estructura de app
+        self.logger.info("📂 Analizando estructura de la aplicación")
+        self.app_structure = self.app_analyzer.analyze_app_structure()
+        app_count = len(self.app_structure)
+        total_files = sum(len(files) for app in self.app_structure.values() for files in app.values())
+        self.logger.info(f"✅ Encontrados {app_count} directorios de aplicación con {total_files} archivos relevantes")
 
     def generate_dependencies_json(self):
         """Genera un JSON con la información de todas las dependencias"""
         self.analyze_dependencies()
         dependencies_info = {}
         
-        # Procesar dependencias SPM
+        # Procesar dependencias SPM de módulos
         for dependency in self.unique_dependencies.values():
             latest_version = self.version_checker.get_latest_version(dependency['url'])
             status = self.version_checker._get_version_status(dependency['version'], latest_version, dependency['url'])
@@ -73,8 +94,29 @@ class SPMDiagramGenerator:
                 'latest_version': latest_version,
                 'timestamp': datetime.now().isoformat(),
                 'status': status,
-                'type': 'spm'
+                'type': 'spm_module'
             }
+        
+        # NUEVO: Añadir análisis de dependencias SPM directas en la aplicación
+        app_spm_analyzer = AppSPMDependencyAnalyzer(self.project_root)
+        app_spm_dependencies = app_spm_analyzer.find_app_spm_dependencies()
+        
+        # Procesar dependencias SPM directas de la aplicación
+        for dependency in app_spm_dependencies:
+            # Evitar duplicados, solo añadir si no existe o si es un tipo diferente
+            if dependency['name'] not in dependencies_info or dependencies_info[dependency['name']]['type'] != 'spm_app_direct':
+                latest_version = self.version_checker.get_latest_version(dependency['url'])
+                status = self.version_checker._get_version_status(dependency['version'], latest_version, dependency['url'])
+                
+                dependencies_info[dependency['name']] = {
+                    'url': dependency['url'],
+                    'version_used': dependency['version'],
+                    'latest_version': latest_version,
+                    'timestamp': datetime.now().isoformat(),
+                    'status': status,
+                    'type': 'spm_app_direct',
+                    'source': dependency.get('source', 'unknown')
+                }
         
         # Procesar dependencias Pods
         if self.pod_dependencies:
@@ -869,11 +911,11 @@ class SPMDiagramGenerator:
         # Ajustar posición Y inicial para los contenedores
         containers_y = base_y + legend_height + 20
         
-        # Contenedor SPM
+        # Contenedor SPM Módulos
         spm_container = ET.SubElement(root, 'mxCell')
         spm_id = f'statistics_spm_{uuid.uuid4().hex[:8]}'
         spm_container.set('id', spm_id)
-        spm_container.set('value', 'Dependencias SPM Externas')
+        spm_container.set('value', 'Dependencias SPM Externas (Módulos)')
         spm_container.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#f5f5f5;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#666666;fontSize=12;')
         spm_container.set('vertex', '1')
         spm_container.set('parent', 'base_layer')
@@ -885,13 +927,42 @@ class SPMDiagramGenerator:
         spm_geo.set('height', '2000')
         spm_geo.set('as', 'geometry')
         
-        # SPM Dependencies
+        # SPM Dependencies de Módulos
         y_offset = 30  # Empezar después del título
         if self.unique_dependencies:
             y_offset = add_spm_dependencies_section(root, spm_id, y_offset, self.unique_dependencies, self.version_checker)
             spm_container.set('height', str(y_offset + 30))  # Ajustar altura del contenedor SPM
         
-        # Contenedor Pods
+        # Contenedor SPM Directas
+        if self.app_spm_dependencies:
+            # Crear un diccionario con el formato esperado por add_spm_dependencies_section
+            app_dependencies_dict = {}
+            for dep in self.app_spm_dependencies:
+                app_dependencies_dict[dep['name']] = dep
+            
+            spm_direct_container = ET.SubElement(root, 'mxCell')
+            spm_direct_id = f'statistics_spm_direct_{uuid.uuid4().hex[:8]}'
+            spm_direct_container.set('id', spm_direct_id)
+            spm_direct_container.set('value', 'Dependencias SPM Directas (App)')
+            spm_direct_container.set('style', 'swimlane;fontStyle=1;childLayout=stackLayout;horizontal=1;startSize=30;fillColor=#e8f4ff;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;strokeColor=#4a90e2;fontSize=12;')
+            spm_direct_container.set('vertex', '1')
+            spm_direct_container.set('parent', 'base_layer')
+            
+            # Posicionar a la derecha del otro contenedor
+            spm_direct_geo = ET.SubElement(spm_direct_container, 'mxGeometry')
+            spm_direct_geo.set('x', str(x_position + width + 40))
+            spm_direct_geo.set('y', str(containers_y))
+            spm_direct_geo.set('width', str(width))
+            spm_direct_geo.set('height', '2000')
+            spm_direct_geo.set('as', 'geometry')
+            
+            # Añadir dependencias SPM directas
+            direct_y_offset = 30  # Empezar después del título
+            if app_dependencies_dict:
+                direct_y_offset = add_spm_dependencies_section(root, spm_direct_id, direct_y_offset, app_dependencies_dict, self.version_checker)
+                spm_direct_container.set('height', str(direct_y_offset + 30))
+        
+        # Contenedor Pods (ajustar posición según lo anterior)
         if self.pod_dependencies:
             pods_container = ET.SubElement(root, 'mxCell')
             pods_id = f'statistics_pods_{uuid.uuid4().hex[:8]}'
@@ -911,14 +982,22 @@ class SPMDiagramGenerator:
             # Altura total = título + (altura_celda * num_pods) + (altura_separador * (num_pods-1)) + padding
             pod_height = title_height + (pod_cell_height * num_pods) + (separator_height * (num_pods - 1)) + padding
             
+            # Si hay un contenedor de SPM Directas, colocar los pods debajo
+            if self.app_spm_dependencies:
+                pod_x = x_position + width + 40
+                pod_y = containers_y + direct_y_offset + 60  # Espacio adicional entre contenedores
+            else:
+                pod_x = x_position + width + 40
+                pod_y = containers_y
+            
             pods_geo = ET.SubElement(pods_container, 'mxGeometry')
-            pods_geo.set('x', str(x_position + width + 40))
-            pods_geo.set('y', str(containers_y))
+            pods_geo.set('x', str(pod_x))
+            pods_geo.set('y', str(pod_y))
             pods_geo.set('width', str(width))
             pods_geo.set('height', str(pod_height))
             pods_geo.set('as', 'geometry')
             
-            pods_y_offset = add_pods_dependencies_section(root, pods_id, 30, self.pod_dependencies, self.version_checker)
+            add_pods_dependencies_section(root, pods_id, 30, self.pod_dependencies, self.version_checker)
 
     def _add_section_headers(self, root, dimensions):
         """Agrega los encabezados de las secciones SPM y Pods"""
