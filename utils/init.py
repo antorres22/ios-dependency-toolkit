@@ -1,1 +1,2 @@
 from .version_checker import VersionChecker
+from .app_structure_analyzer import AppStructureAnalyzer
